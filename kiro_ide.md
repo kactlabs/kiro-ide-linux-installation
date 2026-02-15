@@ -4,48 +4,34 @@
 
 `kiro_ide.sh` is a secure installation script that clones the Kiro IDE installation repository and runs the installer. It includes comprehensive security hardening to protect against common attack vectors.
 
-## Shell Compatibility
 
-### Execution Method
-- **Shebang:** `#!/usr/bin/env bash`
-- **Always runs in:** Bash (regardless of user's default shell)
-- **Works from:** Bash, Zsh, or any POSIX shell
+## Quick Start (Complete Installation)
 
-### Important Notes
+If you encounter dependency issues, use this complete command sequence:
 
-The script uses `#!/usr/bin/env bash` which means:
-- When executed as a file, it always runs in bash
-- The shebang is respected by the OS, not by the shell
-- Your default shell (zsh, bash, etc.) doesn't matter
-
-## Installation Methods
-
-### Method 1: Direct Execution (Recommended)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kactlabs/kiro-ide-linux-installation/main/kiro_ide.sh -o kiro_ide.sh
+# Install dependencies
+sudo apt update
+sudo apt install -y jq
+
+# Download and install Kiro
+cd /tmp
+rm -f kiro_ide.sh /tmp/test_kiro.sh
+curl -fsSL "https://raw.githubusercontent.com/kactlabs/kiro-ide-linux-installation/refs/heads/main/kiro_ide.sh" -o kiro_ide.sh
+cat kiro_ide.sh | grep -A1 "EXPECTED_SCRIPT_HASH="
 chmod +x kiro_ide.sh
 ./kiro_ide.sh --user
 ```
 
-**Why this is best:**
-- Shebang is respected
-- Always runs in bash
-- Works from any shell (bash, zsh, fish, etc.)
-- Allows you to review the script before execution
-
-### Method 2: Pipe to Bash
-```bash
-curl -fsSL https://raw.githubusercontent.com/kactlabs/kiro-ide-linux-installation/main/kiro_ide.sh | bash
-```
-
-**Important:** Always pipe to `bash`, NOT `zsh`
-- ❌ `curl ... | zsh` - Will fail
-- ✅ `curl ... | bash` - Works correctly
-
-### Method 3: With Arguments
-```bash
-./kiro_ide.sh --user --force
-```
+**What each command does:**
+- `sudo apt update` - Updates package lists
+- `sudo apt install -y jq` - Installs jq dependency
+- `cd /tmp` - Changes to temporary directory
+- `rm -f kiro_ide.sh /tmp/test_kiro.sh` - Clears any cached versions
+- `curl -fsSL ...` - Downloads the latest script
+- `cat kiro_ide.sh | grep -A1 "EXPECTED_SCRIPT_HASH="` - Verifies hash configuration
+- `chmod +x kiro_ide.sh` - Makes script executable
+- `./kiro_ide.sh --user` - Runs the installation
 
 ## Usage
 
@@ -237,6 +223,30 @@ chmod +x kiro_ide.sh
 - The temporary directory path is invalid
 - This is a security check to prevent directory traversal
 - Ensure `/tmp` is properly configured
+
+### "Failed to install jq" or "jq dependency missing"
+- The installer needs `jq` for JSON processing
+- Install it manually:
+```bash
+sudo apt update
+sudo apt install -y jq
+```
+- Then re-run the installation:
+```bash
+./kiro_ide.sh --user
+```
+
+### APT repository errors (GPG key issues, 404 errors)
+- These are system configuration issues, not related to Kiro
+- Fix your apt sources:
+```bash
+sudo apt update
+```
+- Remove problematic PPAs if needed:
+```bash
+sudo add-apt-repository --remove ppa:problematic/ppa
+```
+- Then retry the installation
 
 ## Best Practices
 
