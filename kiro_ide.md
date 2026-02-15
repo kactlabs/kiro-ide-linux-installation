@@ -78,27 +78,49 @@ Examples:
 
 ## Security Features
 
+### Input Validation & Sanitization
+- ✅ URL format validation with regex and injection character detection
+- ✅ Filename validation (prevent directory traversal)
+- ✅ Script path whitespace validation
+- ✅ Git output validation (check for suspicious characters)
+- ✅ Hash format validation (64 hex characters)
+- ✅ Permission format validation (3 octal digits)
+- ✅ Script size validation (numeric check + range 1KB-1MB)
+- ✅ Shebang verification with safe parsing
+
 ### Verification & Validation
-- ✅ URL format validation before cloning
 - ✅ Shallow clone (`--depth=1`) to reduce attack surface
-- ✅ Symlink attack prevention
-- ✅ File permission validation
-- ✅ Shebang verification
-- ✅ File size sanity checks (1KB - 1MB)
-- ✅ SHA256 hash verification (optional)
+- ✅ Git repository integrity verification
+- ✅ Cloned remote URL verification
+- ✅ Symlink attack prevention (multiple checks)
+- ✅ File permission validation (no world/group-writable)
+- ✅ SHA256 hash verification with format validation
+- ✅ TOCTOU (Time-of-Check-Time-of-Use) protection
 
 ### Secure Execution
 - ✅ Secure temporary directory creation with `mktemp`
 - ✅ Restricted permissions (700) on temp directory
-- ✅ Directory traversal prevention
+- ✅ TMPDIR override for secure location
+- ✅ Directory traversal prevention with `pwd -P`
 - ✅ PATH hijacking prevention (explicit bash invocation)
 - ✅ Secure file deletion with `shred` (if available)
+- ✅ Symlink exclusion from cleanup operations
 
-### Error Handling
+### Environment Protection
+- ✅ Dangerous git environment variables disabled (GIT_AUTHOR_*, GIT_COMMITTER_*)
+- ✅ Restrictive umask (0077) set at startup
+- ✅ TMPDIR validation and verification
+- ✅ /tmp availability check
+
+### Error Handling & Safety
 - ✅ Strict mode: `set -euo pipefail`
+- ✅ Bash 4.0+ version check
+- ✅ Git version verification
 - ✅ Exit code capture and reporting
 - ✅ Automatic cleanup on exit
+- ✅ SIGINT/TERM signal protection
 - ✅ World-writable directory warnings
+- ✅ Proper stderr redirection for all errors
 
 
 ## Configuration
@@ -119,11 +141,60 @@ EXPECTED_SCRIPT_HASH="<hash-from-step-1>"
 
 This prevents tampering with the installer script.
 
+## Security Hardening Details
+
+### 32 Security Fixes Implemented
+
+The script includes comprehensive security hardening with 32 distinct security fixes:
+
+**Input Validation (8 fixes)**
+1. URL format validation with regex
+2. URL injection character detection
+3. Filename validation (prevent directory traversal)
+4. Script path whitespace validation
+5. Git output validation
+6. Hash format validation (64 hex characters)
+7. Permission format validation (3 octal digits)
+8. Script size numeric validation
+
+**Verification & Integrity (7 fixes)**
+9. Shallow clone to reduce attack surface
+10. Git repository integrity verification
+11. Cloned remote URL verification
+12. Symlink attack prevention (file check)
+13. Symlink attack prevention (cleanup)
+14. Symlink attack prevention (file listing)
+15. TOCTOU protection (re-verify before execution)
+
+**Secure Execution (6 fixes)**
+16. Secure temporary directory with mktemp
+17. Restrictive umask (0077)
+18. TMPDIR override for secure location
+19. /tmp availability verification
+20. Directory traversal prevention with pwd -P
+21. PATH hijacking prevention
+
+**Environment Protection (4 fixes)**
+22. Disable dangerous git environment variables
+23. Bash version check (4.0+)
+24. Git version verification
+25. TMPDIR validation
+
+**Error Handling & Safety (7 fixes)**
+26. Strict mode (set -euo pipefail)
+27. SIGINT/TERM signal protection
+28. Proper stderr redirection
+29. Safe array expansion in printf
+30. Validate TEMP_DIR not empty
+31. Proper cd error checking
+32. Validate awk output
+
 ## Requirements
 
+- `bash` 4.0+ - For script execution with security features
 - `git` - For cloning the repository
-- `bash` - For script execution
 - `sha256sum` - For hash verification
+- Writable `/tmp` directory - For secure temporary files
 
 ## Troubleshooting
 
@@ -132,19 +203,40 @@ This prevents tampering with the installer script.
 chmod +x kiro_ide.sh
 ```
 
+### "Bash 4.0 or higher is required"
+- Update bash to version 4.0 or later
+- Check version: `bash --version`
+
+### "TMPDIR is not writable or does not exist"
+- Ensure `/tmp` is writable: `touch /tmp/test && rm /tmp/test`
+- Check disk space: `df -h /tmp`
+
 ### "Failed to clone repository"
 - Check your internet connection
 - Verify the repository URL is accessible
 - Check if git is installed: `which git`
+- Verify git version: `git --version`
 
 ### "Installation script not found"
 - The repository structure may have changed
-- Check available files: `ls -la /tmp/kiro_installer_*`
+- Check available files in temp directory
+- Verify the repository contains `install-kiro.sh`
 
 ### "Script hash mismatch"
 - The installer has been modified or tampered with
 - Verify the expected hash is correct
-- Re-download the script
+- Re-download the script from the official repository
+- Check for man-in-the-middle attacks
+
+### "Installation script has unsafe permissions"
+- The cloned script has incorrect permissions
+- This is a security check to prevent tampering
+- Verify the repository is not compromised
+
+### "Script path validation failed"
+- The temporary directory path is invalid
+- This is a security check to prevent directory traversal
+- Ensure `/tmp` is properly configured
 
 ## Best Practices
 
@@ -175,11 +267,65 @@ chmod +x kiro_ide.sh
 
 ## Security Considerations
 
-- The script validates the installer before execution
-- Temporary files are stored in a secure directory with restricted permissions
-- Files are securely deleted after installation (using `shred` if available)
-- The script prevents common attack vectors (symlink attacks, directory traversal, PATH hijacking)
-- Always download from the official repository URL
+### Attack Vectors Mitigated
+
+**Injection Attacks**
+- URL injection prevention with character validation
+- Git environment variable injection prevention
+- Format string protection with printf
+
+**File System Attacks**
+- Symlink attacks prevented with multiple checks
+- Directory traversal prevention with path validation
+- World-writable directory detection and warnings
+
+**Execution Attacks**
+- PATH hijacking prevention with explicit bash invocation
+- TOCTOU (Time-of-Check-Time-of-Use) race condition prevention
+- Signal handling for graceful interruption
+
+**Tampering Detection**
+- SHA256 hash verification with format validation
+- File permission validation
+- File size sanity checks
+- Shebang verification
+- Git repository integrity checks
+
+### Best Practices for Users
+
+1. **Always verify the script before execution:**
+   ```bash
+   curl -fsSL https://... -o kiro_ide.sh
+   cat kiro_ide.sh  # Review the code
+   bash kiro_ide.sh --user
+   ```
+
+2. **Use HTTPS only:**
+   - Always download from `https://` URLs
+   - Never use `http://` for installation scripts
+
+3. **Keep the script updated:**
+   - Periodically re-download to get security updates
+   - Check the repository for new versions
+
+4. **Use `--user` flag with curl:**
+   ```bash
+   curl -fsSL https://... | bash -s -- --user
+   ```
+
+5. **Verify hash after download:**
+   ```bash
+   sha256sum kiro_ide.sh
+   # Compare with official hash from repository
+   ```
+
+### What This Script Does NOT Do
+
+- Does not require root/sudo for user installation
+- Does not modify system files without explicit permission
+- Does not collect or transmit user data
+- Does not install telemetry or tracking
+- Does not modify shell configuration files automatically
 
 ## Support
 
