@@ -60,5 +60,3 @@ Examples:
   ./kiro_ide.sh --user            # Clone repo and install for current user (no sudo)
   ./kiro_ide.sh --force           # Clone repo and force reinstall
   ./kiro_ide.sh --uninstall --user # Clone repo and uninstall user installation
-```
-
