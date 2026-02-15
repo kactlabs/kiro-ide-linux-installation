@@ -18,7 +18,8 @@ INSTALL_SCRIPT="install-kiro.sh"
 
 # Expected script hash (SHA256) - update this after verifying the legitimate script
 # This prevents tampering with the installer
-EXPECTED_SCRIPT_HASH=""
+# Generate with: sha256sum install-kiro.sh
+EXPECTED_SCRIPT_HASH="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"  # Update with actual hash
 
 # Create secure temporary directory using mktemp
 TEMP_DIR=$(mktemp -d) || {
@@ -82,14 +83,41 @@ clone_repo() {
     echo -e "${BLUE}Temporary directory: $TEMP_DIR${NC}"
     
     # Validate URL format before cloning
-    if [[ ! "$REPO_URL" =~ ^https://github\.com/[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$ ]]; then
+    # Only allow HTTPS GitHub URLs with valid org/repo names
+    if [[ ! "$REPO_URL" =~ ^https://github\.com/[a-zA-Z0-9]([a-zA-Z0-9_-]{0,38}[a-zA-Z0-9])?/[a-zA-Z0-9._-]+/?$ ]]; then
         echo -e "${RED}Error: Invalid repository URL format${NC}"
+        exit 1
+    fi
+    
+    # Additional check: ensure no suspicious characters that could be git injection vectors
+    if [[ "$REPO_URL" =~ [\;\$\`\|\&\<\>\(\)\{\}\[\]] ]]; then
+        echo -e "${RED}Error: Repository URL contains suspicious characters${NC}"
+        exit 1
+    fi
+    
+    # Verify HTTPS is being used (no HTTP fallback)
+    if [[ ! "$REPO_URL" =~ ^https:// ]]; then
+        echo -e "${RED}Error: Repository URL must use HTTPS protocol${NC}"
         exit 1
     fi
     
     # Clone with depth=1 for faster cloning and reduced attack surface
     if ! git clone --depth=1 "$REPO_URL" "$TEMP_DIR"; then
         echo -e "${RED}Error: Failed to clone repository${NC}"
+        exit 1
+    fi
+    
+    # Verify the cloned repository's remote URL matches expectations
+    local cloned_remote
+    if ! cloned_remote=$(cd "$TEMP_DIR" && git config --get remote.origin.url 2>/dev/null); then
+        echo -e "${RED}Error: Failed to verify cloned repository remote${NC}"
+        exit 1
+    fi
+    
+    if [ "$cloned_remote" != "$REPO_URL" ]; then
+        echo -e "${RED}Error: Cloned repository remote URL mismatch!${NC}"
+        echo -e "${RED}Expected: $REPO_URL${NC}"
+        echo -e "${RED}Got:      $cloned_remote${NC}"
         exit 1
     fi
     
@@ -121,7 +149,16 @@ verify_install_script() {
     fi
     
     # Check script size is reasonable (between 1KB and 1MB)
-    local script_size=$(stat -f%z "$script_path" 2>/dev/null || stat -c%s "$script_path" 2>/dev/null)
+    local script_size
+    if script_size=$(stat -f%z "$script_path" 2>/dev/null); then
+        :  # macOS stat succeeded
+    elif script_size=$(stat -c%s "$script_path" 2>/dev/null); then
+        :  # Linux stat succeeded
+    else
+        echo -e "${RED}Error: Failed to determine script size${NC}"
+        exit 1
+    fi
+    
     if [ "$script_size" -lt 1024 ] || [ "$script_size" -gt 1048576 ]; then
         echo -e "${RED}Error: Installation script size is suspicious (${script_size} bytes)${NC}"
         exit 1
@@ -133,15 +170,22 @@ verify_install_script() {
         exit 1
     fi
     
-    # Verify file permissions are safe (not world-writable)
+    # Verify file permissions are safe (not world-writable or group-writable)
     local perms
-    perms=$(stat -f%OLp "$script_path" 2>/dev/null || stat -c%a "$script_path" 2>/dev/null)
-    case "$perms" in
-        *2*|*7)
-            echo -e "${RED}Error: Installation script has unsafe permissions: $perms${NC}"
-            exit 1
-            ;;
-    esac
+    if perms=$(stat -f%OLp "$script_path" 2>/dev/null); then
+        :  # macOS format
+    elif perms=$(stat -c%a "$script_path" 2>/dev/null); then
+        :  # Linux format
+    else
+        echo -e "${RED}Error: Failed to determine script permissions${NC}"
+        exit 1
+    fi
+    
+    # Check for world-writable (last digit 2 or 7) or group-writable (middle digit 2 or 7)
+    if [[ "$perms" =~ [27]$ ]] || [[ "$perms" =~ ^.[27] ]]; then
+        echo -e "${RED}Error: Installation script has unsafe permissions: $perms${NC}"
+        exit 1
+    fi
     
     # Verify SHA256 hash if EXPECTED_SCRIPT_HASH is set
     if [ -n "$EXPECTED_SCRIPT_HASH" ]; then
@@ -184,20 +228,30 @@ run_installer() {
     fi
     
     # Validate that script_path is within TEMP_DIR (prevent directory traversal)
+    # Use pwd -P for robust path resolution
     local resolved_path
-    resolved_path=$(cd "$(dirname "$script_path")" && pwd)/$(basename "$script_path")
-    case "$resolved_path" in
-        "$TEMP_DIR"*)
-            ;;
-        *)
-            echo -e "${RED}Error: Script path validation failed (security check)${NC}"
-            exit 1
-            ;;
-    esac
+    local resolved_temp
     
-    # Disable dangerous bash options during installer execution
-    local saved_opts=$-
-    set +u  # Allow unset variables in installer
+    if ! resolved_path=$(cd "$(dirname "$script_path")" 2>/dev/null && pwd -P && echo "/$(basename "$script_path")"); then
+        echo -e "${RED}Error: Failed to resolve script path${NC}"
+        exit 1
+    fi
+    resolved_path="${resolved_path%/}"  # Remove trailing slash if present
+    
+    if ! resolved_temp=$(cd "$TEMP_DIR" 2>/dev/null && pwd -P); then
+        echo -e "${RED}Error: Failed to resolve temp directory path${NC}"
+        exit 1
+    fi
+    resolved_temp="${resolved_temp%/}"  # Remove trailing slash if present
+    
+    # Check if resolved_path starts with resolved_temp
+    if [[ "$resolved_path" != "$resolved_temp"* ]]; then
+        echo -e "${RED}Error: Script path validation failed (security check)${NC}"
+        exit 1
+    fi
+    
+    # Run installer while maintaining safety checks
+    # Note: We keep set -u enabled to catch unset variable errors
     
     # Pass all arguments to the installation script
     if [ $# -gt 0 ]; then
@@ -214,15 +268,6 @@ run_installer() {
             echo -e "${RED}Installation script exited with code: $exit_code${NC}"
             return $exit_code
         }
-    fi
-    
-    # Restore bash options
-    if [ -n "$saved_opts" ]; then
-        case "$saved_opts" in
-            *u*)
-                set -u
-                ;;
-        esac
     fi
 }
 
@@ -269,9 +314,21 @@ fi
 
 # Warn if running from world-writable directory
 if [ -w "$SCRIPT_DIR" ]; then
-    script_owner=$(stat -f%u "$SCRIPT_DIR" 2>/dev/null || stat -c%U "$SCRIPT_DIR" 2>/dev/null)
+    local script_owner
+    local current_user
+    
+    if script_owner=$(stat -f%u "$SCRIPT_DIR" 2>/dev/null); then
+        :  # macOS format
+    elif script_owner=$(stat -c%U "$SCRIPT_DIR" 2>/dev/null); then
+        :  # Linux format (returns username)
+        script_owner=$(id -u "$script_owner" 2>/dev/null || echo "unknown")
+    else
+        script_owner="unknown"
+    fi
+    
     current_user=$(id -u)
-    if [ "$script_owner" != "$current_user" ]; then
+    
+    if [ "$script_owner" != "$current_user" ] && [ "$script_owner" != "unknown" ]; then
         echo -e "${YELLOW}Warning: Script is in a world-writable directory. Consider moving it to a secure location.${NC}"
     fi
 fi
