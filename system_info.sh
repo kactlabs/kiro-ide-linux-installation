@@ -41,6 +41,8 @@ fi
 
 # ===== OS INFO =====
 print_table_header "Operating System"
+SYSTEM_USER=$(whoami)
+print_row "Username" "$SYSTEM_USER"
 print_row "OS Type" "$OS_TYPE"
 
 if [[ "$OS_TYPE" == "macOS" ]]; then
