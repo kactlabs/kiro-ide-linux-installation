@@ -42,6 +42,18 @@ Installs Kiro to `~/.local/share/kiro` (no sudo required)
 
 Reinstalls even if the same version is already installed
 
+## System Information
+
+Check your system information (OS, CPU, memory, GPU, disk, swap) with:
+
+```bash
+curl -s https://raw.githubusercontent.com/kactlabs/kiro-ide-linux-installation/refs/heads/main/system_info.sh | bash
+```
+## MacOS:
+![1771166770424](image/README/1771166770424.png)
+
+This works on both macOS and Ubuntu/Linux.
+
 ## Managing Kiro
 
 ### Update Kiro
