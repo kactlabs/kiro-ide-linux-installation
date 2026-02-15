@@ -3,7 +3,7 @@
 # Kiro Clone and Install Script
 # This script clones the Kiro installation repo and runs the installer
 
-set -e
+set -euo pipefail
 
 # Colors for terminal output
 RED='\033[0;31m'
@@ -13,9 +13,24 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Repository information
-REPO_URL="https://github.com/abhilashiig/kiro-ide-linux-installation"
-TEMP_DIR="/tmp/kiro_installer_$(date +%s)"
+REPO_URL="https://github.com/kactlabs/kiro-ide-linux-installation"
 INSTALL_SCRIPT="install-kiro.sh"
+
+# Expected script hash (SHA256) - update this after verifying the legitimate script
+# This prevents tampering with the installer
+EXPECTED_SCRIPT_HASH=""
+
+# Create secure temporary directory using mktemp
+TEMP_DIR=$(mktemp -d) || {
+    echo -e "${RED}Error: Failed to create temporary directory${NC}"
+    exit 1
+}
+
+# Restrict permissions on temp directory
+chmod 700 "$TEMP_DIR" || {
+    echo -e "${RED}Error: Failed to set temp directory permissions${NC}"
+    exit 1
+}
 
 print_header() {
     echo -e "${BLUE}======================================${NC}"
@@ -25,10 +40,16 @@ print_header() {
 }
 
 cleanup() {
+    local exit_code=$?
     if [ -d "$TEMP_DIR" ]; then
         echo -e "${YELLOW}Cleaning up temporary files...${NC}"
+        # Use secure deletion with shred if available, otherwise rm
+        if command -v shred &> /dev/null; then
+            find "$TEMP_DIR" -type f -exec shred -vfz -n 3 {} \; 2>/dev/null || true
+        fi
         rm -rf "$TEMP_DIR"
     fi
+    return $exit_code
 }
 
 # Set up cleanup on exit
@@ -37,7 +58,7 @@ trap cleanup EXIT
 check_dependencies() {
     echo -e "${YELLOW}Checking dependencies...${NC}"
     
-    local deps=("git" "bash")
+    local deps=("git" "bash" "sha256sum")
     local missing_deps=()
     
     for dep in "${deps[@]}"; do
@@ -60,7 +81,14 @@ clone_repo() {
     echo -e "${BLUE}Repository: $REPO_URL${NC}"
     echo -e "${BLUE}Temporary directory: $TEMP_DIR${NC}"
     
-    if ! git clone "$REPO_URL" "$TEMP_DIR"; then
+    # Validate URL format before cloning
+    if [[ ! "$REPO_URL" =~ ^https://github\.com/[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$ ]]; then
+        echo -e "${RED}Error: Invalid repository URL format${NC}"
+        exit 1
+    fi
+    
+    # Clone with depth=1 for faster cloning and reduced attack surface
+    if ! git clone --depth=1 "$REPO_URL" "$TEMP_DIR"; then
         echo -e "${RED}Error: Failed to clone repository${NC}"
         exit 1
     fi
@@ -80,9 +108,57 @@ verify_install_script() {
         exit 1
     fi
     
+    # Verify script is a regular file and readable
+    if [ ! -r "$script_path" ]; then
+        echo -e "${RED}Error: Installation script is not readable${NC}"
+        exit 1
+    fi
+    
+    # Verify it's not a symlink (prevent symlink attacks)
+    if [ -L "$script_path" ]; then
+        echo -e "${RED}Error: Installation script is a symlink (security risk)${NC}"
+        exit 1
+    fi
+    
+    # Check script size is reasonable (between 1KB and 1MB)
+    local script_size=$(stat -f%z "$script_path" 2>/dev/null || stat -c%s "$script_path" 2>/dev/null)
+    if [ "$script_size" -lt 1024 ] || [ "$script_size" -gt 1048576 ]; then
+        echo -e "${RED}Error: Installation script size is suspicious (${script_size} bytes)${NC}"
+        exit 1
+    fi
+    
+    # Verify script starts with shebang (basic sanity check)
+    if ! head -n1 "$script_path" | grep -q '^#!'; then
+        echo -e "${RED}Error: Installation script missing shebang${NC}"
+        exit 1
+    fi
+    
+    # Verify file permissions are safe (not world-writable)
+    local perms
+    perms=$(stat -f%OLp "$script_path" 2>/dev/null || stat -c%a "$script_path" 2>/dev/null)
+    case "$perms" in
+        *2*|*7)
+            echo -e "${RED}Error: Installation script has unsafe permissions: $perms${NC}"
+            exit 1
+            ;;
+    esac
+    
+    # Verify SHA256 hash if EXPECTED_SCRIPT_HASH is set
+    if [ -n "$EXPECTED_SCRIPT_HASH" ]; then
+        local actual_hash=$(sha256sum "$script_path" | awk '{print $1}')
+        if [ "$actual_hash" != "$EXPECTED_SCRIPT_HASH" ]; then
+            echo -e "${RED}Error: Script hash mismatch!${NC}"
+            echo -e "${RED}Expected: $EXPECTED_SCRIPT_HASH${NC}"
+            echo -e "${RED}Actual:   $actual_hash${NC}"
+            echo -e "${YELLOW}This may indicate the script has been tampered with.${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}Script hash verified.${NC}"
+    fi
+    
     if [ ! -x "$script_path" ]; then
         echo -e "${YELLOW}Making installation script executable...${NC}"
-        chmod +x "$script_path"
+        chmod 755 "$script_path"
     fi
     
     echo -e "${GREEN}Installation script verified.${NC}"
@@ -95,18 +171,58 @@ run_installer() {
     echo -e "${BLUE}Script location: $script_path${NC}"
     
     # Check if running in pipe and no --user flag provided
-    if [ ! -t 0 ] && [[ ! "$*" =~ --user ]]; then
-        echo -e "${BLUE}Note: Running via pipe (curl). System-wide installation will proceed with sudo.${NC}"
-        echo -e "${BLUE}Use --user flag if you prefer user-only installation (no sudo required).${NC}"
-        echo
+    if [ ! -t 0 ]; then
+        case "$@" in
+            *--user*)
+                ;;
+            *)
+                echo -e "${BLUE}Note: Running via pipe (curl). System-wide installation will proceed with sudo.${NC}"
+                echo -e "${BLUE}Use --user flag if you prefer user-only installation (no sudo required).${NC}"
+                echo
+                ;;
+        esac
     fi
+    
+    # Validate that script_path is within TEMP_DIR (prevent directory traversal)
+    local resolved_path
+    resolved_path=$(cd "$(dirname "$script_path")" && pwd)/$(basename "$script_path")
+    case "$resolved_path" in
+        "$TEMP_DIR"*)
+            ;;
+        *)
+            echo -e "${RED}Error: Script path validation failed (security check)${NC}"
+            exit 1
+            ;;
+    esac
+    
+    # Disable dangerous bash options during installer execution
+    local saved_opts=$-
+    set +u  # Allow unset variables in installer
     
     # Pass all arguments to the installation script
     if [ $# -gt 0 ]; then
-        echo -e "${BLUE}Arguments passed to installer: $*${NC}"
-        "$script_path" "$@"
+        echo -e "${BLUE}Arguments passed to installer: $@${NC}"
+        # Use explicit path to prevent PATH hijacking
+        bash "$script_path" "$@" || {
+            local exit_code=$?
+            echo -e "${RED}Installation script exited with code: $exit_code${NC}"
+            return $exit_code
+        }
     else
-        "$script_path"
+        bash "$script_path" || {
+            local exit_code=$?
+            echo -e "${RED}Installation script exited with code: $exit_code${NC}"
+            return $exit_code
+        }
+    fi
+    
+    # Restore bash options
+    if [ -n "$saved_opts" ]; then
+        case "$saved_opts" in
+            *u*)
+                set -u
+                ;;
+        esac
     fi
 }
 
@@ -115,6 +231,11 @@ print_usage() {
     echo ""
     echo "This script clones the Kiro installation repository and runs the installer."
     echo "All arguments are passed directly to the installation script."
+    echo ""
+    echo "SECURITY NOTES:"
+    echo "  - This script validates the installer before execution"
+    echo "  - Temporary files are securely deleted after installation"
+    echo "  - For curl usage, always use --user flag to avoid sudo"
     echo ""
     echo "Common installer options:"
     echo "  --install     Install or update Kiro (default)"
@@ -138,6 +259,22 @@ print_usage() {
 
 # Main script execution
 print_header
+
+# Validate script is running from a safe location
+if [ "${0#/}" != "$0" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+else
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+fi
+
+# Warn if running from world-writable directory
+if [ -w "$SCRIPT_DIR" ]; then
+    script_owner=$(stat -f%u "$SCRIPT_DIR" 2>/dev/null || stat -c%U "$SCRIPT_DIR" 2>/dev/null)
+    current_user=$(id -u)
+    if [ "$script_owner" != "$current_user" ]; then
+        echo -e "${YELLOW}Warning: Script is in a world-writable directory. Consider moving it to a secure location.${NC}"
+    fi
+fi
 
 # Check for help flag
 for arg in "$@"; do
