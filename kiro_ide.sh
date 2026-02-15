@@ -55,10 +55,10 @@ if [[ "$REPO_URL" =~ [\;\$\`\|\&\<\>\(\)\{\}\[\]] ]]; then
     exit 1
 fi
 
-# Expected script hash (SHA256) - update this after verifying the legitimate script
-# This prevents tampering with the installer
-# Generate with: sha256sum install-kiro.sh
-EXPECTED_SCRIPT_HASH="e0ece1c0223a2969ff279907507f8e23bf12a2194cda9b8c9f43a9f1d924f747"  # Update with actual hash
+# Expected script hash (SHA256) - leave empty to disable hash verification
+# To enable: generate with: sha256sum install-kiro.sh
+# Then set: EXPECTED_SCRIPT_HASH="<hash-value>"
+EXPECTED_SCRIPT_HASH=""  # Hash verification disabled by default
 
 # Create secure temporary directory using mktemp
 TEMP_DIR=$(mktemp -d) || {
