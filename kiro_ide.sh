@@ -410,8 +410,8 @@ fi
 
 # Warn if running from world-writable directory
 if [ -w "$SCRIPT_DIR" ]; then
-    local script_owner
-    local current_user
+    script_owner=""
+    current_user=""
     
     if script_owner=$(stat -f%u "$SCRIPT_DIR" 2>/dev/null); then
         :  # macOS format
